@@ -1,0 +1,98 @@
+#!/usr/bin/perl -w
+use strict;
+
+print "Content-type: text/plain; charset=utf-8\n\n" if(defined($ENV{'HTTP_HOST'}));
+
+sub readfile($)
+{
+  if(open RIN,"<:raw","$_[0]")
+  {
+    my $old=$/;
+    undef $/;
+    my $content=<RIN>;
+    $/=$old;
+    close RIN;
+    return($content);
+  }
+  return "";
+}
+
+
+my $fw=readfile("/home/philipp/public_html/ssd/analyse/EXT0CB6Q.dec");
+
+
+our %map=(0=>81920,8442112=>233728);
+our %section=(0=>0x20000,8442112=>0x10000);
+open IN,"</home/philipp/public_html/ssd/todo/ranges.txt";
+while(<IN>)
+{
+  if(m/^P\d+,0x(\w+),0x(\w+),[^,]*,[^,]*,(\d+)/)
+  {
+    $section{hex($1)}=hex($2)-hex($1);
+    $map{hex($1)}=$3;
+    #print "$3 $1 $2\n";
+  }
+}
+close IN;
+
+foreach(sort {$a <=> $b} keys %section)
+{
+  print sprintf("mem:0x%08X fw:0x%08X size:0x%08X\n",$_,$map{$_},$section{$_});
+ 
+}
+
+
+
+sub getfw($$)
+{
+  my $q=hex($_[0]);
+  #print "Wanting $_[0] / $q\n";
+  foreach(keys %section)
+  {
+    #print "Trying $_\n";
+    if($q>=$_ && $q<($_+$section{$_}))
+    {
+      #print "pos: ".($q-$_+$map{$_})." ".$map{$_}."\n";
+      return substr($fw,$q-$_+$map{$_},$_[1]);
+    }
+  }
+  #print "Unknown: $q\n";
+}
+
+
+sub getmem($$$)
+{
+  my $pos=hex($_[1]) & 0xffff0000;
+  my $addr=sprintf("mem0x%X",$pos);
+  if(open(DIN,"</home/philipp/ssd/ssd$_[0]/$addr"))
+  {
+    my $old=$/;
+    undef $/;
+    my $content=<DIN>;
+    my $r=substr($content,hex($_[1])-$pos,$_[2]);  
+    close DIN;
+    $/=$old;
+    return $r;
+  }
+  return ""; 
+} 
+
+open IN,"</home/philipp/public_html/ssd/loganalyse.txt";
+while(<IN>)
+{
+  #print;
+  my @a=split",",$_;
+  next unless($a[2] eq "x" || $a[2] eq "r");
+  my $size=$a[5] eq "Thumb" ? 2:4;
+  my $fmt=$a[5] eq "Thumb" ? "v":"V";
+  my $fwb=unpack($fmt,getfw($a[1],$size));
+
+
+  my $bad=unpack($fmt,getmem("bad",$a[1],$size));
+  my $good=unpack($fmt,getmem("good",$a[1],$size));
+  my $state=(defined($fwb)?"":"UNDEF-").($bad eq ($fwb||"") ? "OK" : $bad eq $good ? "GOOD" : "BAD");
+  print sprintf("0x%08X,%s,%s,%08X,%08X,%08X,$state\n",hex($a[1]),$a[2],$a[5],$fwb||0,$bad,$good);
+}
+close IN;
+
+

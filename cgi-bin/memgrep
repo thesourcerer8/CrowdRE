@@ -1,0 +1,35 @@
+#!/usr/bin/perl -w
+use strict;
+
+use CGI;
+my %in=();
+CGI::ReadParse(\%in);
+
+BEGIN { $| = 1 };
+
+print "Content-type: text/html; charset=utf-8\n\n";
+
+
+if(!defined($in{'q'}))
+{
+  print "<html><body><form>Search Hex Bytes: <input type='text' name='q' placeholder='40 30 ff 00'> <input type='submit' name='submit' value='Search'></form> This is an unindexed binary search. Please use only seldomly.";
+  exit;
+}
+
+
+foreach(</home/philipp/ssd/ssd*/mem*>)
+{
+  undef $/;
+  open IN,"<:raw",$_;
+  my $content=<IN>;
+  close IN;
+
+  my $q=pack( 'H*', $in{'q'} );
+
+  if(index($content,$q)>=0)
+  {
+    print "Found in $_:".index($content,$q)."<br/>\n";
+  }
+
+
+}

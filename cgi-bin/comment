@@ -1,0 +1,84 @@
+#!/usr/bin/perl -w
+use strict;
+use MIME::Base64;
+use Mail::Mailer;
+use CGI;
+
+my %in=();
+CGI::ReadParse(\%in);
+print "Content-type: text/html; charset=utf-8\n\n";
+
+our $file="";
+our $line="";
+
+my $f="db/garbage";
+if(defined($in{'addr'}))
+{
+  print "Comment function for address 0x".sprintf("%08X",hex($in{'addr'}))."<br/>";
+  $f="db/comment0x".sprintf("%08x",hex($in{'addr'}));
+}
+elsif(defined($in{'file'}))
+{
+  $file=""; $file=$1 if($in{'file'} =~m/^([\w_.\-]+)$/);
+  $line=""; $line=$1 if($in{'line'} =~m/^(\d+)$/);
+  print "Comment function for file $file #$line<br/>";
+  $f="db/comment$file.$line";
+}
+
+
+if(defined($in{'postit'}))
+{
+  open OUT,defined($in{'edit'})?">$f":">>$f";
+  print OUT $in{'comment'}."\n";
+  close OUT;
+
+  my $mailer = Mail::Mailer->new('sendmail');
+  $mailer->open({
+   From=>"apache\@www2.futureware.at",
+   To=>"pg\@futureware.at",
+   Subject=>"CloudRE Comment",
+   "Mime-Version"=>"1.0",
+   "Content-Type"=>"text/plain; charset=\"utf-8\"",
+   "Content-Transfer-Encoding"=>"8bit" });
+  foreach (keys %in)
+  {
+    print $mailer "$_: $in{$_}\n";
+  }
+  print $mailer "https://www2.futureware.at/cgi-bin/ssd/comment?addr=".$in{'addr'}."&edit=change\n";
+  $mailer->close();
+}
+
+my $content="";
+if(-f $f)
+{
+  print "Existing comments:<br/>";
+  open IN,"<$f";
+  undef $/;
+  $content=<IN>;
+  close IN;
+  $content=~s/&/&amp;/g;
+  $content=~s/</&lt;/g;
+  $content=~s/\s*$//;
+  $content=~s/\n/<br\/>/sg;
+  print "<pre>$content</pre>";
+}
+else
+{
+  print "No comments yet.<br/>";
+}
+
+print "<form method='post'>";
+print "<input type='hidden' name='postit' value='postit'/>";
+print "<input type='hidden' name='edit' value='change'/>" if(defined($in{'edit'}));
+print "<input type='hidden' name='addr' value='".sprintf("0x%08X",hex($in{'addr'}))."'/>" if(defined($in{'addr'}));
+print "<input type='hidden' name='file' value='$file'/>" if(defined($in{'file'}));
+print "<input type='hidden' name='line' value='$line'/>" if(defined($in{'line'}));
+print "Your comment:<br/>";
+my $data="";
+if(defined($in{'edit'}))
+{
+  $data=$content;
+}
+print "<textarea cols='70' rows='5' name='comment'>$data</textarea>";
+print "<input type='submit' name='submit' value='Submit your comment'/><br/>";
+print "</form>";

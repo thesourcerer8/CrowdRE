@@ -1,0 +1,108 @@
+#!/usr/bin/perl -w
+use strict;
+
+use CGI;
+my %in=();
+CGI::ReadParse(\%in);
+print "Content-type: text/html; charset=utf-8\n\n";
+
+my %sources=("good"=>1,"bad"=>1,"good2"=>1);
+
+if($in{'addr'}=~m/^0x[0-9a-fA-F]{8}$/)
+{
+  if($in{'src'}=~m/^(good|bad|good2)$/)
+  {
+    my $a=$in{'src'};
+    %sources=($a=>1);
+  }
+  my $pos=hex($in{'addr'}) & 0xffff0000;
+
+
+  if(hex($in{'addr'}) & 0xfff0)
+  {
+    print "<a href='?addr=".sprintf("0x%08x",$pos)."'>To start of block</a>";
+  }
+
+  my $addr=sprintf("mem0x%X",$pos);
+  #print $f."\n";
+
+  print "<html><head><title>$addr</title></head><body>";
+  print "<img src='/~philipp/ssd/images/ssdgood/$addr.png' align='right' alt='good' title='good'/>";
+  print "<img src='/~philipp/ssd/images/ssdbad/$addr.png' align='right' alt='bad' title='bad'/>";
+ 
+  print "<a href='?addr=".sprintf("0x%08X",hex($in{'addr'})-0x10000)."&amp;src=$in{src}'>&lt;&lt;PREV BLOCK</a> &nbsp; &nbsp; " if(hex($in{'addr'})>0);
+  print "<a href='?addr=".sprintf("0x%08X",hex($in{'addr'})+0x10000)."&amp;src=$in{src}'>NEXT BLOCK>></a> <br/><br/>";
+
+  my %content=();
+  my $contentlength=0;
+
+  foreach my $src (sort keys %sources)
+  {
+    my $f="/home/philipp/ssd/ssd$src/$addr";
+    if(open IN,"<$f")
+    {
+      undef $/;
+      $content{$src}=<IN>;
+      close IN;
+      #print "Loaded $f : ".length($content{$src})." Bytes<br/>";
+      $contentlength=length($content{$src}) if(length($content{$src})>$contentlength);
+    }
+  }
+    
+  print "<font face=\"Courier New\">";
+  foreach my $src (sort keys %sources)
+  {
+    my $d="        ".sprintf("%10s",$src)."               ";
+    $d=~s/ /&nbsp;/g;
+    print $d;
+  }
+  print "<br/>";
+  my $base=hex($in{'addr'})&0xffff0000;
+  my $startp=(hex($in{'addr'}) & 0xfff8)/8;
+  #print "base: $base startp:$startp<br/>\n";
+  foreach my $pos8 ($startp .. ($contentlength/8)-1)
+  {
+    my $pos=$pos8*8;
+    print sprintf("%08X:",$base+$pos);
+
+    foreach my $src (sort keys %sources)
+    {
+      foreach(0 .. 7)
+      {
+        print sprintf(" %02X",unpack("C",substr($content{$src},$pos+$_,1)));
+      } 
+      print " ";
+      foreach(0 .. 7)
+      {
+        my $d=unpack("C",substr($content{$src},$pos+$_,1));
+        $d=32 if($d<32);
+        $d=32 if($d>0x7e);
+        $d=pack("C",$d);
+        $d=~s/&/&amp;/g;
+        $d=~s/</&lt;/g;
+        $d=~s/ /&nbsp;/g;
+        print $d;
+      } 
+
+      print "|";
+    }
+    print " <a href='comment?addr=0x".sprintf("%08X",$base+$pos)."' target='_blank'>Comment</a>";
+
+
+    my $fn="db/comment0x".sprintf("%08x",$base+$pos);
+    if(open IN,"<$fn")
+    {
+      undef $/;
+      my $content=<IN>;
+      close IN;
+      $content=~s/&/&amp;/g;
+      $content=~s/</&lt;/g;
+      $content=~s/\s*$//;
+      $content=~s/\n/<br\/>/sg;
+      print " $content";
+    }
+    print "<br/>";
+  }
+  print "</font></body></html>";
+
+}

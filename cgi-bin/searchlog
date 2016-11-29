@@ -1,0 +1,84 @@
+#!/usr/bin/perl -w
+use strict;
+
+use CGI;
+my %in=();
+CGI::ReadParse(\%in);
+
+BEGIN { $| = 1 };
+
+print "Content-type: text/html; charset=utf-8\n\n";
+
+sub sanitize($)
+{
+  my $d=$_[0];
+  $d=~s/&/&amp;/g;
+  $d=~s/</&lt;/g;
+  return $d;
+}
+
+
+if(!defined($in{'q'}))
+{
+  print "<html><body><form>Search Text in Logfiles: <input type='text' name='q' placeholder='SATA'> <input type='submit' name='submit' value='Search'></form> This is an unindexed text search. Please use only seldomly.";
+  exit;
+}
+
+
+# Indexed searching for start addresses:
+if($in{'q'}=~m/^(0x[0-9a-fA-F]{8})\->$/)
+{
+  my $addr=sprintf("0x%08x",hex($1));
+  if(open IN,"</home/philipp/public_html/ssd/logindex/$addr")
+  {
+    while(<IN>)
+    {
+      $_=~s/^(.*?\.log)/<a href='logs?log=$1' target='_blank'>$1<\/a>/;
+      print $_."<br/>";
+    }
+    close IN;
+  }
+}
+else
+{
+ # Normal searching, unindexed ...
+ foreach(</home/philipp/public_html/ssd/goodlogs/*.log>)
+ {
+  my $fn=$_; $fn=~s/^\/home\/philipp\/public_html\/ssd\/goodlogs\///;
+  open IN,"<$_";
+  $/="\n";
+  my $found=0;
+  while(<IN>)
+  {
+    if(index($_,$in{'q'})>=0)
+    {
+      if(!$found)
+      {
+        print "Found in <a href='logs?log=$fn' target='_blank'>$fn</a>:".index($_,$in{'q'})."<br/>\n";
+        $found++;
+      }
+      print " &nbsp; ".sanitize($_)."<br/>" if(index($_,$in{'q'})>=0);
+    }
+  }
+  close IN;
+ }
+}
+
+foreach(<db/comm*>)
+{
+  undef $/;
+  open IN,"<:raw",$_;
+  my $content=<IN>;
+  close IN;
+
+  my $fn=$_; $fn=~s/^db\/comment//;
+
+  if(index($content,$in{'q'})>=0)
+  {
+    print "Found in <a href='showmem?addr=$fn' target='_blank'>comment$fn</a>:".index($content,$in{'q'}).sanitize($content)."<br/>\n";
+  }
+}
+
+
+
+print "Done.\n";

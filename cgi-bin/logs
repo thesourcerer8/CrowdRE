@@ -1,0 +1,292 @@
+#!/usr/bin/perl -w
+use strict;
+
+use CGI;
+my %in=();
+CGI::ReadParse(\%in);
+print "Content-type: text/html; charset=utf-8\n\n";
+
+my %sources=("good"=>1,"bad"=>1,"good2"=>1);
+
+our %cat=();
+our %head=();
+
+our $cachefilename="";
+our $cachedata="";
+
+sub readfile($)
+{
+  if(open RIN,"<:raw","$_[0]")
+  {
+    my $old=$/;
+    undef $/;
+    my $content=<RIN>;
+    $/=$old;
+    close RIN;
+    return($content);
+  }
+  return "";
+}
+
+sub getmem($$$)
+{
+  my $pos=hex($_[1]) & 0xffff0000;
+  my $addr=sprintf("mem0x%X",$pos);
+  if($cachefilename ne $addr)
+  {
+    $cachefilename=$addr;
+    $cachedata=readfile("/home/philipp/ssd/ssd$_[0]/$addr");
+  }
+  return substr($cachedata,hex($_[1])-$pos,$_[2]) if(length($cachedata)>=(hex($_[1])-$pos+$_[2]));
+  return ""; 
+} 
+
+sub getComments($)
+{
+  if($_[0]=~m/^0x([0-9a-fA-F]{8})/)
+  {
+    #return "Trying db/comment0x".lc($1);
+    if(open(CIN,"<db/comment0x".lc($1)))
+    {
+      my $old=$/;
+      undef $/;
+      my $content=<CIN>;
+      $/=$old;
+      close CIN;
+      $content=~s/&/&amp;/g;
+      $content=~s/</&lt;/g;
+      $content=~s/\s*$//;
+      $content=~s/\n/<br\/>/sg;
+      return $content;
+    }
+  }
+  return "";
+}
+
+sub getFileComments($$)
+{
+  {
+    if(open(CIN,"<db/comment".$1.".".$_[1]))
+    {
+      my $old=$/;
+      undef $/;
+      my $content=<CIN>;
+      $/=$old;
+      close CIN;
+      $content=~s/&/&amp;/g;
+      $content=~s/</&lt;/g;
+      $content=~s/\s*$//;
+      $content=~s/\n/<br\/>/sg;
+      return $content;
+    }
+  }
+  return "";
+}
+
+
+sub bin2hex($)
+{
+  my $d="";
+  foreach(0 .. length($_[0])-1)
+  {
+    $d.=sprintf("%02X",unpack("C",substr($_[0],$_,1)));
+  }
+  return($d);
+}
+
+sub bin2hexendian($)
+{
+  my $d="";
+  foreach(0 .. length($_[0])-1)
+  {
+    $d=sprintf("%02X",unpack("C",substr($_[0],$_,1))).$d;
+  }
+  return($d);
+}
+
+sub isGenuine($$)
+{
+  #if($in{'verify'})
+  #{
+    my $data=getmem("bad",$_[0],(length($_[1])-2)/2);
+    my $a=uc(substr($_[1],2));
+    my $b=bin2hexendian($data);
+    if($a ne $b)
+    {
+      #print "$_[0] $_[1] ".bin2hex($data)." ".bin2hexendian($data)."<br/>\n";
+      #print "$a $b<br/>\n";
+    }
+    return ($a eq $b || (substr($a,0,4) eq substr($b,4,4) && substr($a,4,4) eq substr($b,0,4)))?"#90ee90":"#ee6a50";
+    exit;
+    return "#eeee00"; 
+  #}
+  #return "#eeeeee";
+}
+
+sub sayBytes($)
+{
+  return int($_[0]/1024/1024/1024/1024)." TB" if($_[0]>=1024*1024*1024*1024);
+  return int($_[0]/1024/1024/1024)." GB" if($_[0]>=1024*1024*1024);
+  return int($_[0]/1024/1024)." MB" if($_[0]>=1024*1024);
+  return int($_[0]/1024)." KB" if($_[0]>=1024);
+  return int($_[0])." B";
+}
+
+if(defined($in{'log'})  && $in{'log'}=~m/^([\w\-]+\.log)$/)
+{
+  open IN,"</home/philipp/public_html/ssd/goodlogs/$in{'log'}";
+  print "<a href='/~philipp/ssd/analyse/EXT0CB6Q.dec.html' target='_blank'>Memory view</a> &nbsp; ";
+
+  print "<a href='logs' target='_blank'>Back to Trace Logs</a>   Please use the hyperlinks named C in the comment field to add your comments.<br/>";
+  print "Logfile for <a href='/~philipp/ssd/goodlogs/$in{'log'}' target='_blank'>$in{'log'}</a><br/>\n";
+  print "<table border='1'>";
+  print "<tr><td>PC-before</td><td>PC-after</td><td>ISA</td><td>Mode</td><td>Cmd</td><td>Instruction</td><td>Parameter</td><td>Comments</td></tr>\n";
+  my $counter=0;
+
+  my @prev=();
+
+
+  while(<IN>)
+  {
+    last if($counter>10000);
+    push @prev,$_;
+    my $a=shift(@prev) if($counter>5);
+
+    my $newcomm="";
+    # Auto-Decompiler for |= and &=! :
+    if($prev[-1]=~m/STR/ && $prev[-2]=~m/(BIC|ORR)/ && $prev[-3]=~m/LDR/)
+    {
+      if($prev[-1]=~m/STRB?\s+(r\d+),\s*(\[[^\]]+\])\s+.*?(\[.*?\])/)
+      {
+        my $reg=$1;
+        my $addr=$2;
+        my $raddr=$3;
+        if($prev[-3]=~m/LDRB?\s+(r\d+),\s*(\[[^\]]+\])/)
+        {
+          my $areg=$1;
+          my $aaddr=$2;
+          if($prev[-2]=~m/(BIC|ORR)\s+(r\d+),\s*(r\d+),\s*#?([0-9a-fxA-F]+)/)
+          {
+            my $creg=$2;
+            my $dreg=$3;
+            my $val=uc $4; $val=~s/X/x/;
+            if($reg eq $areg && $addr eq $aaddr && $creg eq $reg && $dreg eq $reg)
+            {
+              $newcomm=($prev[-2]=~m/BIC/)?"$raddr &amp;=! $val":"$raddr |= $val";
+            }
+          }
+        }   
+      }
+    }
+    if($prev[-1]=~m/STR/ && $prev[-2]=~m/MOV/)
+    {
+      if($prev[-1]=~m/STRB?(\.W)?\s+(r\d+),\s*(\[[^\]]+\])\s+.*?(\[.*?\])/)
+      {
+        my $reg=$2;
+        my $addr=$3;
+        my $raddr=$4;
+        if($prev[-2]=~m/MOV(\.W)?\s+(r\d+),\s*#?([0-9a-fxA-F]+)/)
+        {
+          my $creg=$2;
+          my $val=uc $3; $val=~s/X/x/;
+          if($reg eq $creg)
+          {
+            $newcomm="$raddr := $val";
+          }
+        }   
+      }
+    }
+
+
+    my $d=$_;
+    if($d=~m/^(0x\w+)->(0x\w+) (\w+) (\w+) (\w+)\s+(\w+)\s+([\w.]+)(.*)/)
+    {
+      my @a=($1,$2,$3,$4,$5,$6,$7,$8,$9);
+      my $comm=getComments($a[0]);
+      $newcomm="" if($comm);
+      $a[7]=~s/\[(\w+)\]/[<a href='showmem?addr=$1' target='_blank'>$1<\/a>]/g;
+
+      my $ap="0<a href='searchlog?q=$a[0]->' target='_blank'>x</a>".substr($a[0],2);
+      my $ap2="0<a href='searchlog?q=$a[1]->' target='_blank'>x</a>".substr($a[1],2);
+      my $bgcolor=($counter&1)?'#f0f0f0':'#ffffff';
+      my $genuine=isGenuine($a[0],$a[5]);
+      print "<tr bgcolor='$bgcolor'><td>$ap</td><td>$ap2</td><td>$a[2]</td><td>$a[3]</td><td bgcolor='$genuine'>$a[5]</td><td>$a[6]</td><td>$a[7]</td><td><a href='comment?addr=$a[0]' target='_blank'>C</a> $comm$newcomm</td>";
+      print "</tr>";
+    }
+    elsif($d=~m/^\s*>\s*reg/)
+    {
+    }
+    elsif($d=~m/D-Cache: disabled, I-Cache: disabled/)
+    {
+    }
+    else
+    {
+      my $comm=getFileComments($in{'log'},$counter);
+      print "<tr><td colspan='7'>$d</td><td><a href='comment?file=".$in{'log'}."&amp;line=".$counter."' target='_blank'>C</a> $comm</td></tr>\n";
+    }
+    $counter++;
+  }
+  close IN;
+  print "</table>";
+  print "Too many lines. Avoiding browser crashes.\n" if($counter>100000);
+  exit;
+
+}
+
+
+foreach my $fn(</home/philipp/public_html/ssd/goodlogs/*.log>)
+{
+  my $fna=$fn; $fna=~s/^.*\///;
+  if($fna=~m/debugmex(\d)-?_?(\w*)/)
+  {
+    $cat{$1}{$2}{$fn}=1;
+    $head{$2}=1;
+  }
+  else
+  {
+    $cat{'?'}{'?'}{$fn}=1;
+    $head{'?'}=1;
+  }
+}
+
+print "<a href='/~philipp/ssd/analyse/EXT0CB6Q.dec.html' target='_blank'>Memory view</a>";
+
+print "<table border='1'>";
+print "<tr><td></td><td></td><td colspan='4' align='center'>CPUs</td></tr>";
+print "<tr><td></td><td></td>";
+foreach my $core (sort keys %cat)
+{
+  print "<td>mex".$core."</td>";
+}
+print "</tr>";
+
+my $count=0;
+
+foreach my $c(sort keys %head)
+{
+  print "<tr>";
+  print "<td rowspan='30'>Workloads</td>" if(!$count); 
+  print "<td>".$c."</td>";
+  foreach my $core (sort keys %cat)
+  {
+    print "<td>";
+    foreach my $d (sort keys %{$cat{$core}{$c}})
+    {
+      my $e=$d; $e=~s/^.*\///;
+      my $g=$e; $g=~s/^debug//; $g=~s/\.log$//;
+      my $s=-s $d;
+      my $sb=$s>1000000 ? (" ".sayBytes($s)) :"";
+      #print "<a href='/~philipp/ssd/goodlogs/".$e."'>Log</a> ";
+      print "<a href='logs?log=".$e."' target='_blank'>$g</a>$sb ";
+
+    }
+    print "</td>";
+  }
+  print "</tr>";
+  $count++;
+}
+print "</table>";
+print <<EOF
+Search Text in Logfiles: <form method='post' action='searchlog'><input type='text' name='q' placeholder='SATA'> <input type='submit' name='submit' value='Search'></form>
+EOF
+;
